@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Novo Empréstimo</title>
+    <link rel="icon" href="{{ url_for('static', filename='favicon.png') }}" type="image/png">
+
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+</head>
+<body class="bg-light">
+
+<div class="container mt-5" style="max-width: 600px;">
+    <div class="card shadow border-0">
+        <div class="card-header bg-success text-white">
+            <h4 class="mb-0">Lançar Novo Empréstimo</h4>
+        </div>
+        <div class="card-body">
+            <form action="/criar_emprestimo" method="POST">
+                
+                <div class="mb-3">
+                    <label class="form-label fw-bold">Cliente:</label>
+                    <select name="cliente_id" class="form-select" required>
+                        <option value="" selected disabled>Selecione...</option>
+                        {% for cliente in clientes %}
+                            <option value="{{ cliente[0] }}">{{ cliente[1] }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <div class="row">
+                    <div class="col-md-12 mb-3">
+                        <label class="form-label">Valor tirado do Caixa (R$):</label>
+                        <input type="number" step="0.01" name="tirado_caixa" class="form-control border-danger" placeholder="Quanto ele pediu?" required>
+                        <small class="text-muted">Isso será descontado do seu Dinheiro Disponível.</small>
+                    </div>
+                </div>
+
+                <hr>
+
+                <div class="row">
+                    <div class="col-md-6 mb-3">
+                        <label class="form-label">Valor da Parcela (R$):</label>
+                        <input type="number" step="0.01" name="valor_parcela" class="form-control" required>
+                    </div>
+                    <div class="col-md-6 mb-3">
+                        <label class="form-label">Qtd. Parcelas:</label>
+                        <input type="number" name="parcelas_totais" class="form-control" required>
+                    </div>
+                </div>
+
+                <div class="row">
+                    <div class="col-md-6 mb-3">
+                        <label class="form-label">Data Início:</label>
+                        <input type="date" name="data_inicio" class="form-control" required>
+                    </div>
+                    <div class="col-md-6 mb-3">
+                        <label class="form-label">1º Vencimento:</label>
+                        <input type="date" name="proximo_vencimento" class="form-control" required>
+                    </div>
+                </div>
+
+                <div class="d-grid gap-2 mt-3">
+                    <button type="submit" class="btn btn-success btn-lg">Confirmar</button>
+                    <a href="/" class="btn btn-secondary">Cancelar</a>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+</body>
+</html>
