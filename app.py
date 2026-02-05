@@ -79,7 +79,12 @@ def index():
     conn = get_db_connection()
     cur = conn.cursor()
     
-    # AGORA BUSCAMOS TAMBÉM O 'valor_tomado' (e.valor_tomado) NA CONSULTA
+    # --- FAXINA AUTOMÁTICA ---
+    # Apaga empréstimos inválidos (parcelas = 0 ou valor total = 0) para não travar o sistema
+    cur.execute("DELETE FROM emprestimos WHERE parcelas_totais = 0 OR valor_total = 0")
+    conn.commit()
+    
+    # Busca dados (Agora só virão os bons)
     cur.execute('''
         SELECT c.nome, e.valor_total, e.parcelas_totais, e.valor_parcela, e.proximo_vencimento, e.id, e.parcelas_pagas, e.valor_tomado
         FROM emprestimos e
@@ -97,32 +102,35 @@ def index():
     conn.close()
     
     lista_emprestimos = []
-    total_na_rua_liquido_usuario = 0.0 # Variável para somar só a SUA parte
+    total_na_rua_liquido_usuario = 0.0
     hoje = date.today()
 
     for linha in dados:
-        parcelas_totais = linha[2]
-        parcelas_pagas = linha[6]
+        parcelas_totais = int(linha[2])
+        parcelas_pagas = int(linha[6])
         valor_parcela_bruta = float(linha[3])
         vencimento = linha[4]
         
-        # Dados Financeiros para cálculo do Patrimônio Líquido
+        # Dados Financeiros
         valor_total_divida = float(linha[1])
         valor_original_tomado = float(linha[7]) if linha[7] else valor_total_divida
         
-        # 1. Lucro Total do Empréstimo (Ex: 1500 - 1000 = 500)
+        # 1. Lucro Total
         lucro_total = valor_total_divida - valor_original_tomado
         
-        # 2. Parte do Sócio Total (Ex: 250)
+        # 2. Parte do Sócio
         parte_socio_total = lucro_total / 2
         
-        # 3. Quanto desse empréstimo é REALMENTE SEU? (Ex: 1500 - 250 = 1250)
+        # 3. Total Líquido do Usuário
         total_receber_usuario = valor_total_divida - parte_socio_total
         
-        # 4. Quanto vale cada parcela para VOCÊ (Ex: 1250 / 1 = 1250 por parcela)
-        valor_parcela_liquida_usuario = total_receber_usuario / parcelas_totais
+        # 4. Valor Parcela Líquida (Proteção extra, embora a faxina já resolva)
+        if parcelas_totais > 0:
+            valor_parcela_liquida_usuario = total_receber_usuario / parcelas_totais
+        else:
+            valor_parcela_liquida_usuario = 0.0
 
-        # 5. Soma ao patrimônio apenas as parcelas que faltam, usando o valor LÍQUIDO
+        # 5. Soma ao patrimônio
         parcelas_restantes = parcelas_totais - parcelas_pagas
         total_na_rua_liquido_usuario += (parcelas_restantes * valor_parcela_liquida_usuario)
 
@@ -130,7 +138,7 @@ def index():
 
         lista_emprestimos.append({
             "cliente": linha[0],
-            "valor": linha[1], # Na tabela mostra o valor cheio (o cliente deve tudo)
+            "valor": linha[1],
             "parcelas": f"{parcelas_pagas}/{parcelas_totais}",
             "valor_parcela": linha[3],
             "vencimento": vencimento.strftime('%d/%m/%Y'),
@@ -138,11 +146,10 @@ def index():
             "cor": cor_texto
         })
 
-    # Patrimônio = Dinheiro na Mão + Dinheiro na Rua (Já descontado o sócio)
+    # Patrimônio Total
     caixa_total = saldo_disponivel + total_na_rua_liquido_usuario
 
     return render_template('index.html', emprestimos=lista_emprestimos, saldo=saldo_disponivel, caixa_total=caixa_total)
-
 # --- CLIENTES ---
 @app.route('/clientes')
 def listar_clientes():
@@ -262,8 +269,8 @@ def pagar_parcela(id):
     emprestimo = cur.fetchone()
 
     if emprestimo:
-        pagas_atual = emprestimo[0]
-        totais = emprestimo[1]
+        pagas_atual = int(emprestimo[0])
+        totais = int(emprestimo[1])
         vencimento_atual = emprestimo[2]
         valor_da_parcela = float(emprestimo[3])
         
@@ -272,7 +279,13 @@ def pagar_parcela(id):
         valor_original_emprestado = float(emprestimo[5]) if emprestimo[5] else valor_total_divida
         
         lucro_total_emprestimo = valor_total_divida - valor_original_emprestado
-        lucro_desta_parcela = lucro_total_emprestimo / totais
+        
+        # Proteção contra divisão por zero no pagamento também
+        if totais > 0:
+            lucro_desta_parcela = lucro_total_emprestimo / totais
+        else:
+            lucro_desta_parcela = 0.0
+
         parte_do_socio = lucro_desta_parcela / 2
         
         valor_liquido_para_caixa = valor_da_parcela - parte_do_socio
@@ -315,48 +328,46 @@ def adicionar_caixa():
 def historico():
     conn = get_db_connection()
     cur = conn.cursor()
-    
-    # 1. Busca os dados para a Tabela (os últimos 50 registros)
     cur.execute("SELECT * FROM historico ORDER BY data_pagamento DESC LIMIT 50")
-    dados_tabela = cur.fetchall()
+    dados = cur.fetchall()
     
-    # 2. Busca os dados para o Gráfico (Soma lucros agrupado por Mês)
-    # TO_CHAR converte a data para '02/2026'
     cur.execute("""
         SELECT TO_CHAR(data_pagamento, 'MM/YYYY') as mes, SUM(valor_pago)
         FROM historico 
-        WHERE valor_pago > 0 -- Pega só o que entrou (Lucro/Pagamentos)
+        WHERE valor_pago > 0
         GROUP BY 1
         ORDER BY MAX(data_pagamento) ASC
-        LIMIT 12 -- Mostra os últimos 12 meses
+        LIMIT 12
     """)
     dados_grafico = cur.fetchall()
     
     cur.close()
     conn.close()
     
-    # Prepara lista da Tabela
-    lista_historico = []
-    for linha in dados_tabela:
-        lista_historico.append({
+    lista = []
+    for linha in dados:
+        # Verifica se o valor é None antes de converter
+        val = linha[2]
+        if val is None: val = 0.0
+        else: val = float(val)
+
+        lista.append({
             "cliente": linha[1],
-            "valor": linha[2],
+            "valor": val,
             "data": linha[3].strftime('%d/%m/%Y %H:%M'),
             "detalhe": linha[4]
         })
 
-    # Prepara listas do Gráfico para o JavaScript
     meses_grafico = []
     valores_grafico = []
     for linha in dados_grafico:
-        meses_grafico.append(linha[0])    # Ex: '02/2026'
-        valores_grafico.append(float(linha[1])) # Ex: 1250.00
+        meses_grafico.append(linha[0])
+        val_graf = linha[1]
+        if val_graf is None: val_graf = 0.0
+        else: val_graf = float(val_graf)
+        valores_grafico.append(val_graf)
 
-    return render_template('historico.html', 
-                           historico=lista_historico,
-                           meses_grafico=meses_grafico,
-                           valores_grafico=valores_grafico)
-
+    return render_template('historico.html', historico=lista, meses_grafico=meses_grafico, valores_grafico=valores_grafico)
 
 if __name__ == '__main__':
     app.run(debug=True)
