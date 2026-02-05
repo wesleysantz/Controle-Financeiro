@@ -55,7 +55,9 @@ def criar_tabelas():
             saldo DECIMAL(10, 2) DEFAULT 0
         );
     ''')
+    # ID 1 = Seu Caixa | ID 2 = Caixa do Sócio
     cur.execute("INSERT INTO caixa (id, saldo) VALUES (1, 0) ON CONFLICT (id) DO NOTHING;")
+    cur.execute("INSERT INTO caixa (id, saldo) VALUES (2, 0) ON CONFLICT (id) DO NOTHING;")
 
     cur.execute('''
         CREATE TABLE IF NOT EXISTS historico (
@@ -79,12 +81,11 @@ def index():
     conn = get_db_connection()
     cur = conn.cursor()
     
-    # --- FAXINA AUTOMÁTICA ---
-    # Apaga empréstimos inválidos (parcelas = 0 ou valor total = 0) para não travar o sistema
+    # Faxina Automática
     cur.execute("DELETE FROM emprestimos WHERE parcelas_totais = 0 OR valor_total = 0")
     conn.commit()
     
-    # Busca dados (Agora só virão os bons)
+    # Busca Empréstimos
     cur.execute('''
         SELECT c.nome, e.valor_total, e.parcelas_totais, e.valor_parcela, e.proximo_vencimento, e.id, e.parcelas_pagas, e.valor_tomado
         FROM emprestimos e
@@ -94,9 +95,15 @@ def index():
     ''')
     dados = cur.fetchall()
 
+    # Busca Saldo SEU (ID 1)
     cur.execute("SELECT saldo FROM caixa WHERE id = 1")
-    resultado_saldo = cur.fetchone()
-    saldo_disponivel = float(resultado_saldo[0]) if resultado_saldo else 0.0
+    res_saldo = cur.fetchone()
+    saldo_disponivel = float(res_saldo[0]) if res_saldo else 0.0
+
+    # Busca Saldo SÓCIO (ID 2)
+    cur.execute("SELECT saldo FROM caixa WHERE id = 2")
+    res_socio = cur.fetchone()
+    saldo_socio = float(res_socio[0]) if res_socio else 0.0
     
     cur.close()
     conn.close()
@@ -111,26 +118,18 @@ def index():
         valor_parcela_bruta = float(linha[3])
         vencimento = linha[4]
         
-        # Dados Financeiros
         valor_total_divida = float(linha[1])
         valor_original_tomado = float(linha[7]) if linha[7] else valor_total_divida
         
-        # 1. Lucro Total
         lucro_total = valor_total_divida - valor_original_tomado
-        
-        # 2. Parte do Sócio
         parte_socio_total = lucro_total / 2
-        
-        # 3. Total Líquido do Usuário
         total_receber_usuario = valor_total_divida - parte_socio_total
         
-        # 4. Valor Parcela Líquida (Proteção extra, embora a faxina já resolva)
         if parcelas_totais > 0:
             valor_parcela_liquida_usuario = total_receber_usuario / parcelas_totais
         else:
             valor_parcela_liquida_usuario = 0.0
 
-        # 5. Soma ao patrimônio
         parcelas_restantes = parcelas_totais - parcelas_pagas
         total_na_rua_liquido_usuario += (parcelas_restantes * valor_parcela_liquida_usuario)
 
@@ -146,11 +145,16 @@ def index():
             "cor": cor_texto
         })
 
-    # Patrimônio Total
     caixa_total = saldo_disponivel + total_na_rua_liquido_usuario
 
-    return render_template('index.html', emprestimos=lista_emprestimos, saldo=saldo_disponivel, caixa_total=caixa_total)
-# --- CLIENTES ---
+    # Enviamos saldo_socio para o HTML
+    return render_template('index.html', 
+                           emprestimos=lista_emprestimos, 
+                           saldo=saldo_disponivel, 
+                           caixa_total=caixa_total,
+                           saldo_socio=saldo_socio)
+
+# ... (Rotas de Clientes continuam iguais) ...
 @app.route('/clientes')
 def listar_clientes():
     conn = get_db_connection()
@@ -211,7 +215,6 @@ def excluir_cliente(id):
     conn.close()
     return redirect(url_for('listar_clientes'))
 
-# --- EMPRÉSTIMOS ---
 @app.route('/novo_emprestimo')
 def novo_emprestimo():
     conn = get_db_connection()
@@ -229,14 +232,11 @@ def criar_emprestimo():
     parcelas_totais = int(request.form['parcelas_totais'])
     data_inicio = request.form['data_inicio']
     proximo_vencimento = request.form['proximo_vencimento']
-    
     tirado_do_caixa = float(request.form['tirado_caixa'])
-    
     valor_total = valor_parcela * parcelas_totais
     
     conn = get_db_connection()
     cur = conn.cursor()
-    
     cur.execute("SELECT nome FROM clientes WHERE id = %s", (cliente_id,))
     nome_cliente = cur.fetchone()[0]
 
@@ -245,6 +245,7 @@ def criar_emprestimo():
         VALUES (%s, %s, %s, %s, %s, %s, %s)
     ''', (cliente_id, valor_total, valor_parcela, parcelas_totais, data_inicio, proximo_vencimento, tirado_do_caixa))
     
+    # Tira do SEU caixa (ID 1)
     cur.execute("UPDATE caixa SET saldo = saldo - %s WHERE id = 1", (tirado_do_caixa,))
     
     cur.execute("INSERT INTO historico (cliente_nome, valor_pago, detalhe) VALUES (%s, %s, %s)", (nome_cliente, -tirado_do_caixa, "Empréstimo Concedido"))
@@ -273,21 +274,17 @@ def pagar_parcela(id):
         totais = int(emprestimo[1])
         vencimento_atual = emprestimo[2]
         valor_da_parcela = float(emprestimo[3])
-        
-        # CÁLCULO DO SÓCIO
         valor_total_divida = float(emprestimo[4])
         valor_original_emprestado = float(emprestimo[5]) if emprestimo[5] else valor_total_divida
         
         lucro_total_emprestimo = valor_total_divida - valor_original_emprestado
         
-        # Proteção contra divisão por zero no pagamento também
         if totais > 0:
             lucro_desta_parcela = lucro_total_emprestimo / totais
         else:
             lucro_desta_parcela = 0.0
 
         parte_do_socio = lucro_desta_parcela / 2
-        
         valor_liquido_para_caixa = valor_da_parcela - parte_do_socio
 
         novas_pagas = pagas_atual + 1
@@ -299,6 +296,7 @@ def pagar_parcela(id):
             novo_vencimento = vencimento_atual + relativedelta(months=1)
 
         cur.execute("UPDATE emprestimos SET parcelas_pagas = %s, proximo_vencimento = %s, status = %s WHERE id = %s", (novas_pagas, novo_vencimento, status, id))
+        # Adiciona no SEU caixa (ID 1)
         cur.execute("UPDATE caixa SET saldo = saldo + %s WHERE id = 1", (valor_liquido_para_caixa,))
         
         nome_cliente = emprestimo[6]
@@ -317,6 +315,7 @@ def adicionar_caixa():
     valor_add = float(request.form['valor_adicionar'])
     conn = get_db_connection()
     cur = conn.cursor()
+    # Adiciona no SEU caixa (ID 1)
     cur.execute("UPDATE caixa SET saldo = saldo + %s WHERE id = 1", (valor_add,))
     cur.execute("INSERT INTO historico (cliente_nome, valor_pago, detalhe) VALUES (%s, %s, %s)", ("CAIXA", valor_add, "Adição Manual"))
     conn.commit()
@@ -324,6 +323,21 @@ def adicionar_caixa():
     conn.close()
     return redirect(url_for('index'))
 
+# --- NOVA ROTA: ADICIONAR NO SÓCIO (ID 2) ---
+@app.route('/adicionar_socio', methods=['POST'])
+def adicionar_socio():
+    valor_add = float(request.form['valor_adicionar'])
+    conn = get_db_connection()
+    cur = conn.cursor()
+    # Adiciona no SÓCIO (ID 2)
+    cur.execute("UPDATE caixa SET saldo = saldo + %s WHERE id = 2", (valor_add,))
+    cur.execute("INSERT INTO historico (cliente_nome, valor_pago, detalhe) VALUES (%s, %s, %s)", ("SÓCIO", valor_add, "Adição Manual no Caixa Sócio"))
+    conn.commit()
+    cur.close()
+    conn.close()
+    return redirect(url_for('index'))
+
+# ... (Rota historico continua igual) ...
 @app.route('/historico')
 def historico():
     conn = get_db_connection()
@@ -346,7 +360,6 @@ def historico():
     
     lista = []
     for linha in dados:
-        # Verifica se o valor é None antes de converter
         val = linha[2]
         if val is None: val = 0.0
         else: val = float(val)
