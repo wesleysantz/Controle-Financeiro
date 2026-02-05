@@ -382,5 +382,32 @@ def historico():
 
     return render_template('historico.html', historico=lista, meses_grafico=meses_grafico, valores_grafico=valores_grafico)
 
+
+
+
+
+################# Apagar tudo ##############################
+@app.route('/resetar_sistema_confiavel_123')
+def resetar_sistema():
+    conn = get_db_connection()
+    cur = conn.cursor()
+    
+    # 1. Apaga Histórico, Empréstimos e Clientes e reinicia a contagem dos IDs
+    # O 'CASCADE' garante que apague tudo que está ligado
+    cur.execute("TRUNCATE TABLE historico, emprestimos, clientes RESTART IDENTITY CASCADE;")
+    
+    # 2. Zera o dinheiro dos Caixas (ID 1 e ID 2)
+    cur.execute("UPDATE caixa SET saldo = 0 WHERE id IN (1, 2);")
+    
+    conn.commit()
+    cur.close()
+    conn.close()
+    
+    return "<h1>Sistema Zerado com Sucesso!</h1><p>Todos os clientes, histórico e dinheiro foram apagados. <a href='/'>Voltar ao Início</a></p>"
+
+
+####################################################
+
+
 if __name__ == '__main__':
     app.run(debug=True)
